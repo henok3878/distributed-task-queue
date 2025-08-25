@@ -1,0 +1,13 @@
+# Go
+bin/ 
+vendor/ 
+*.test 
+*.out 
+
+#IDE 
+.vscode 
+
+# Docker    
+*.log 
+.env 
+
