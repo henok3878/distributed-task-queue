@@ -1,0 +1,20 @@
+{
+  "rabbit_version": "3.13.7",
+  "vhosts": [{ "name": "/" }],
+  "exchanges": [
+    { "name": "tasks.direct", "vhost": "/", "type": "direct", "durable": true },
+    { "name": "tasks.dlx",    "vhost": "/", "type": "direct", "durable": true }
+  ],
+  "queues": [
+    { "name": "tasks.default", "vhost": "/", "durable": true },
+    { "name": "tasks.high",    "vhost": "/", "durable": true },
+    { "name": "tasks.dlq",     "vhost": "/", "durable": true }
+  ],
+  "bindings": [
+    { "source": "tasks.direct", "vhost": "/", "destination": "tasks.default", "destination_type": "queue", "routing_key": "default" },
+    { "source": "tasks.direct", "vhost": "/", "destination": "tasks.high",    "destination_type": "queue", "routing_key": "high" },
+    { "source": "tasks.dlx",    "vhost": "/", "destination": "tasks.dlq",     "destination_type": "queue", "routing_key": "default" },
+    { "source": "tasks.dlx",    "vhost": "/", "destination": "tasks.dlq",     "destination_type": "queue", "routing_key": "high" }
+  ]
+}
+

@@ -1,13 +1,31 @@
 services:
   postgres:
+    env_file:
+      - ../.env
     image: postgres:16 
+    container_name: dq-postgres
     environment: 
-      POSTGRES_USER: postgres 
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: appdb 
+      POSTGRES_USER: ${PG_USER}  
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DATABASE} 
     ports: ["5432:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
+  
+  rabbitmq:
+    env_file:
+      - ../.env
+    image: rabbitmq:3.13.7-management
+    container_name: dq-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RMQ_PASS}
+    ports:
+      - "5672:5672" # AMQP 
+      - "15672:15672" # Mgmt UI
+    volumes:
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
 
 volumes:
   pgdata: 
