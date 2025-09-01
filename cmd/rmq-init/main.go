@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"strings"
 
 	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"github.com/henok3878/distributed-task-queue/internal/config"
+	"github.com/henok3878/distributed-task-queue/internal/rmq"
 )
 
 const (
@@ -22,11 +24,19 @@ func main() {
 	if err != nil {
 		log.Fatal("AMQP Dial failed!", err)
 	}
+	log.Println("RabbitMQ topology ensured!")
 }
 
 func ensureTopology() error {
-	url := rmqURL()
-	queues := env("QUEUES")
+	amqpUrl, err := rmq.URLFromEnv()
+	if err != nil {
+		return fmt.Errorf("config", err)
+	}
+	queues, err := config.GetFromEnv("QUEUES")
+
+	if err != nil {
+		return fmt.Errorf("config: ", err)
+	}
 
 	var routingKeys []string
 	for _, s := range strings.Split(queues, ",") {
@@ -36,12 +46,12 @@ func ensureTopology() error {
 		}
 	}
 	if len(routingKeys) == 0 {
-		log.Fatal("QUEUES is set but empty after parsing")
+		return fmt.Errorf("QUEUES is set but empty after parsing")
 	}
 
-	conn, err := amqp.Dial(url)
+	conn, err := amqp.Dial(amqpUrl)
 	if err != nil {
-		return fmt.Errorf("amqp dial (%s): %w", url, err)
+		return fmt.Errorf("amqp dial (%s): %w", amqpUrl, err)
 	}
 
 	defer conn.Close()
@@ -80,33 +90,5 @@ func ensureTopology() error {
 			return fmt.Errorf("bind dlq <- %s[%s]: %w", exchangeDLX, rk, err)
 		}
 	}
-
-	log.Println("RabbitMQ topology ensured!")
 	return nil
-
-}
-
-func rmqURL() string {
-	v := os.Getenv("RMQ_URL")
-	if v != "" {
-		return v
-	}
-
-	user := env("RMQ_USER")
-	pass := env("RMQ_PASS")
-	host := env("RMQ_HOST")
-	port := env("RMQ_PORT")
-	vhost := env("RMQ_VHOST")
-	if !strings.HasPrefix(vhost, "/") {
-		vhost = "/" + vhost
-	}
-	return fmt.Sprintf("amqp://%s:%s@%s:%s%s", user, pass, host, port, vhost)
-}
-
-func env(k string) string {
-	v := os.Getenv(k)
-	if strings.TrimSpace(v) == "" {
-		log.Fatalf("required env %s is not set", k)
-	}
-	return v
 }
