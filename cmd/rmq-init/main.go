@@ -3,19 +3,11 @@ package main
 import (
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/henok3878/distributed-task-queue/internal/config"
 	"github.com/henok3878/distributed-task-queue/internal/rmq"
-)
-
-const (
-	exchangeDirect = "tasks.direct"
-	exchangeDLX    = "tasks.dlx"
-	queueDLQ       = "tasks.dlq"
 )
 
 func main() {
@@ -32,21 +24,9 @@ func ensureTopology() error {
 	if err != nil {
 		return fmt.Errorf("config", err)
 	}
-	queues, err := config.GetFromEnv("QUEUES")
-
+	topo, err := rmq.Load()
 	if err != nil {
 		return fmt.Errorf("config: ", err)
-	}
-
-	var routingKeys []string
-	for _, s := range strings.Split(queues, ",") {
-		s = strings.TrimSpace(s)
-		if s != "" {
-			routingKeys = append(routingKeys, s)
-		}
-	}
-	if len(routingKeys) == 0 {
-		return fmt.Errorf("QUEUES is set but empty after parsing")
 	}
 
 	conn, err := amqp.Dial(amqpUrl)
@@ -63,31 +43,31 @@ func ensureTopology() error {
 	defer ch.Close()
 
 	// durable direct exchanges
-	if err := ch.ExchangeDeclare(exchangeDirect, "direct", true, false, false, false, nil); err != nil {
-		return fmt.Errorf("declare %s: %w", exchangeDirect, err)
+	if err := ch.ExchangeDeclare(topo.MainExchange, "direct", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare %s: %w", topo.MainExchange, err)
 	}
-	if err := ch.ExchangeDeclare(exchangeDLX, "direct", true, false, false, false, nil); err != nil {
-		return fmt.Errorf("declare %s: %w", exchangeDLX, err)
+	if err := ch.ExchangeDeclare(topo.DLXExchange, "direct", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare %s: %w", topo.DLXExchange, err)
 	}
 
 	// queues + bindings
-	for _, rk := range routingKeys {
+	for _, rk := range topo.RoutingKeys {
 		qName := "tasks." + rk
 		if _, err := ch.QueueDeclare(qName, true, false, false, false, nil); err != nil {
 			return fmt.Errorf("declare queue %s: %w", qName, err)
 		}
-		if err := ch.QueueBind(qName, rk, exchangeDirect, false, nil); err != nil {
-			return fmt.Errorf("bind %s <- %s[%s]: %w", qName, exchangeDirect, rk, err)
+		if err := ch.QueueBind(qName, rk, topo.MainExchange, false, nil); err != nil {
+			return fmt.Errorf("bind %s <- %s[%s]: %w", qName, topo.MainExchange, rk, err)
 		}
 	}
 
 	// dlq + binding
-	if _, err := ch.QueueDeclare(queueDLQ, true, false, false, false, nil); err != nil {
+	if _, err := ch.QueueDeclare(topo.DLQName, true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare dlq: %w", err)
 	}
-	for _, rk := range routingKeys {
-		if err := ch.QueueBind(queueDLQ, rk, exchangeDLX, false, nil); err != nil {
-			return fmt.Errorf("bind dlq <- %s[%s]: %w", exchangeDLX, rk, err)
+	for _, rk := range topo.RoutingKeys {
+		if err := ch.QueueBind(topo.DLQName, rk, topo.DLXExchange, false, nil); err != nil {
+			return fmt.Errorf("bind dlq <- %s[%s]: %w", topo.DLXExchange, rk, err)
 		}
 	}
 	return nil
