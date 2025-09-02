@@ -69,6 +69,8 @@ func main() {
 
 	// /healthz
 	api.RegisterHealth(mux, api.Deps{DB: db, RMQ: rmqCh, Topology: topo})
+	// /enqueue
+	api.RegisterEnqueue(mux, api.Deps{DB: db, RMQ: rmqCh, Topology: topo})
 
 	srv := &http.Server{
 		Addr:              httpPort, // e.g. ":8080"
