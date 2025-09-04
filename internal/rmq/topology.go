@@ -51,3 +51,7 @@ func Load() (Topology, error) {
 func (t Topology) FullQueueName(rk string) string {
 	return t.QueuePrefix + "." + rk
 }
+
+func (t Topology) RetryQueueName(rk string) string {
+	return t.Namespace + ".retry." + rk
+}
