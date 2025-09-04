@@ -24,13 +24,15 @@ db-wait:
 	  until docker exec dq-postgres pg_isready -U "$$PG_USER" -d "$$PG_DATABASE" >/dev/null 2>&1; do sleep 1; done; \
 	  echo "Postgres is ready."'
 
-# apply type_registry.sql and schema.sql inside the container
+# apply type_registry.sql, schema.sql and events.sql inside the container
 db-apply: db-wait
 	@bash -c 'set -euo pipefail; source .env; \
 	  echo "applying db/type_registry.sql ..."; \
 	  docker exec -i dq-postgres psql -v ON_ERROR_STOP=1 -U "$$PG_USER" -d "$$PG_DATABASE" < db/type_registry.sql; \
 	  echo "applying db/schema.sql ..."; \
 	  docker exec -i dq-postgres psql -v ON_ERROR_STOP=1 -U "$$PG_USER" -d "$$PG_DATABASE" < db/schema.sql; \
+	  echo "applying db/events.sql ..."; \
+	  docker exec -i dq-postgres psql -v ON_ERROR_STOP=1 -U "$$PG_USER" -d "$$PG_DATABASE" < db/events.sql; \
 	  echo "DB schema applied."'
 
 # optional: seed one sample task type (maps to your queues)
