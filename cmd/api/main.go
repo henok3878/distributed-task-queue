@@ -13,6 +13,7 @@ import (
 
 	"github.com/henok3878/distributed-task-queue/internal/api"
 	"github.com/henok3878/distributed-task-queue/internal/config"
+	"github.com/henok3878/distributed-task-queue/internal/metrics"
 	"github.com/henok3878/distributed-task-queue/internal/rmq"
 )
 
@@ -34,7 +35,7 @@ func main() {
 		log.Fatal("config:", err)
 	}
 
-	// load topology (derives names from RMQ_NAMESPACE + QUEUES)
+	// load topology
 	topo, err := rmq.Load()
 	if err != nil {
 		log.Fatal("config:", err)
@@ -47,7 +48,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// RabbitMQ connection + channel (one long-lived each)
+	// RabbitMQ connection + channel
 	rmqConn, err := amqp.Dial(amqpURL)
 	if err != nil {
 		log.Fatal("amqp dial:", err)
@@ -60,9 +61,12 @@ func main() {
 	}
 	defer rmqCh.Close()
 
+	// register Prom metrics we defined
+	metrics.MustRegisterAll()
+
 	mux := http.NewServeMux()
 
-	// optional root info
+	// info
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"service": "distributed-task-queue"})
 	})
@@ -74,8 +78,11 @@ func main() {
 	// /tasks/{id}
 	api.RegisterTasks(mux, api.Deps{DB: db, RMQ: rmqCh, Topology: topo})
 
+	// /metrics (Prometheus)
+	metrics.Expose(mux, "GET /metrics")
+
 	srv := &http.Server{
-		Addr:              httpPort, // e.g. ":8080"
+		Addr:              httpPort,
 		Handler:           mux,
 		ReadHeaderTimeout: 2 * time.Second,
 	}

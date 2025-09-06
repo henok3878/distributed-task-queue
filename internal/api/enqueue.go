@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	amqp "github.com/rabbitmq/amqp091-go"
 
+	"github.com/henok3878/distributed-task-queue/internal/metrics"
 	"github.com/henok3878/distributed-task-queue/internal/store"
 )
 
@@ -36,14 +37,28 @@ func RegisterEnqueue(mux *http.ServeMux, d Deps) {
 
 		var req EnqueueRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ErrorJSON(w, http.StatusBadRequest, "invalid json: %v", err); return
+			ErrorJSON(w, http.StatusBadRequest, "invalid json: %v", err)
+			return
 		}
 		if strings.TrimSpace(req.Type) == "" {
-			ErrorJSON(w, http.StatusBadRequest, "type is required"); return
+			ErrorJSON(w, http.StatusBadRequest, "type is required")
+			return
 		}
 		if len(req.Payload) == 0 || string(req.Payload) == "null" {
-			ErrorJSON(w, http.StatusBadRequest, "payload is required"); return
+			ErrorJSON(w, http.StatusBadRequest, "payload is required")
+			return
 		}
+
+		// start timing & ensure metric emission (ok|error) - capture all requests including validation errors
+		start := time.Now()
+		status := "ok"
+		var finalQueue string
+		defer func() {
+			t := metrics.LabelOrUnknown(req.Type)
+			q := metrics.LabelOrUnknown(finalQueue)
+			metrics.EnqueueLatency.WithLabelValues(t, q).Observe(metrics.ObserveDuration(start))
+			metrics.EnqueueTotal.WithLabelValues(t, q, status).Inc()
+		}()
 
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
@@ -51,39 +66,60 @@ func RegisterEnqueue(mux *http.ServeMux, d Deps) {
 		// registry defaults
 		active, defQ, defMax, err := store.GetTypeDefaults(ctx, d.DB, req.Type)
 		if errors.Is(err, pgx.ErrNoRows) {
-			ErrorJSON(w, http.StatusBadRequest, "unknown type %q", req.Type); return
+			status = "error"
+			ErrorJSON(w, http.StatusBadRequest, "unknown type %q", req.Type)
+			return
 		}
 		if err != nil {
-			ErrorJSON(w, http.StatusInternalServerError, "db error: %v", err); return
+			status = "error"
+			ErrorJSON(w, http.StatusInternalServerError, "db error: %v", err)
+			return
 		}
 		if !active {
-			ErrorJSON(w, http.StatusBadRequest, "type %q is not active", req.Type); return
+			status = "error"
+			ErrorJSON(w, http.StatusBadRequest, "type %q is not active", req.Type)
+			return
 		}
 
 		// resolve queue/attempts with guardrails
 		queue := strings.TrimSpace(req.Queue)
-		if queue == "" { queue = defQ }
+		if queue == "" {
+			queue = defQ
+		}
 		if !contains(d.Topology.RoutingKeys, queue) {
-			ErrorJSON(w, http.StatusBadRequest, "queue %q not allowed (one of %v)", queue, d.Topology.RoutingKeys); return
+			status = "error"
+			ErrorJSON(w, http.StatusBadRequest, "queue %q not allowed (one of %v)", queue, d.Topology.RoutingKeys)
+			return
 		}
 		maxAttempts := req.MaxAttempts
-		if maxAttempts == 0 { maxAttempts = defMax }
+		if maxAttempts == 0 {
+			maxAttempts = defMax
+		}
 		if maxAttempts < 1 || maxAttempts > 20 {
-			ErrorJSON(w, http.StatusBadRequest, "max_attempts out of range (1..20)"); return
+			status = "error"
+			ErrorJSON(w, http.StatusBadRequest, "max_attempts out of range (1..20)")
+			return
 		}
 
 		// insert (idempotent on idempotency_key)
 		taskID := newID()
 		outID, outStatus, outQueue, err := store.UpsertEnqueue(ctx, d.DB, taskID, req.Type, queue, req.Payload, req.IdempotencyKey, maxAttempts)
 		if err != nil {
-			ErrorJSON(w, http.StatusInternalServerError, "insert error: %v", err); return
+			status = "error"
+			ErrorJSON(w, http.StatusInternalServerError, "insert error: %v", err)
+			return
 		}
+
+		// use the canonical queue from DB for metrics
+		finalQueue = outQueue
 
 		// publish minimal persistent message (workers fetch payload by id)
 		body, _ := json.Marshal(map[string]string{"id": outID, "type": req.Type})
-		pub := amqp.Publishing{ ContentType: "application/json", DeliveryMode: amqp.Persistent, Body: body }
+		pub := amqp.Publishing{ContentType: "application/json", DeliveryMode: amqp.Persistent, Body: body}
 		if err := d.RMQ.PublishWithContext(ctx, d.Topology.Namespace+".direct", outQueue, false, false, pub); err != nil {
-			ErrorJSON(w, http.StatusServiceUnavailable, "publish failed: %v", err); return
+			status = "error"
+			ErrorJSON(w, http.StatusServiceUnavailable, "publish failed: %v", err)
+			return
 		}
 
 		WriteJSON(w, http.StatusCreated, EnqueueResponse{ID: outID, Status: outStatus, Queue: outQueue})
@@ -98,6 +134,10 @@ func newID() string {
 	return string(dst)
 }
 func contains(xs []string, want string) bool {
-	for _, x := range xs { if x == want { return true } }
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
 	return false
 }
