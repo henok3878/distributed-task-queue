@@ -220,6 +220,12 @@ Note: Runtime/process metrics are not exported by default. To include them, regi
 - Resiliency: worker uses transactional writes-before-ack to avoid losing results in the face of failures.
 - Cleanup: data volumes are preserved across `make down`; use `make destroy` for a fresh slate.
 
+## Roadmap / TODOs
+
+- Worker SDK (`pkg/worker`):
+  - A small runtime that manages DB and AMQP connections, sets QoS/prefetch, and handles graceful shutdown. It lets you register handlers per task type, applies built‑in backoff strategies (list, fixed, exponential) to publish TTL‑based retries, and performs transactional state transitions (RUNNING, SUCCEEDED, RETRY, FAILED) via the store. It will also expose basic metrics like handler latency and success/failure/retry counters, and Prometheus registerer.
+  - This is gonna reduce boilerplate and repeated wiring across worker apps, standardizes retries and metrics, and defines a clear worker contract so compatible workers can be implemented in any language.
+
 ## License
 
 MIT
